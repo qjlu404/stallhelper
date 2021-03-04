@@ -22,20 +22,14 @@
     #include <GL/gl.h>
 #endif
 
-#ifndef XPLM300
-    #error This is made to be compiled against the XPLM300 SDK
-#endif
-
 #define MSG_ADD_DATAREF 0x01000000
 
 static XPLMWindowID	g_window;
-
-// Callbacks we will register when we create our window
-void				draw_hello_world(XPLMWindowID in_window_id, void* in_refcon);
-int					dummy_mouse_handler(XPLMWindowID in_window_id, int x, int y, int is_down, void* in_refcon) { return 0; }
-XPLMCursorStatus	dummy_cursor_status_handler(XPLMWindowID in_window_id, int x, int y, void* in_refcon) { return xplm_CursorDefault; }
-int					dummy_wheel_handler(XPLMWindowID in_window_id, int x, int y, int wheel, int clicks, void* in_refcon) { return 0; }
-void				dummy_key_handler(XPLMWindowID in_window_id, char key, XPLMKeyFlags flags, char virtual_key, void* in_refcon, int losing_focus) { }
+void draw_hello_world(XPLMWindowID in_window_id, void* in_refcon);
+int dummy_mouse_handler(XPLMWindowID in_window_id, int x, int y, int is_down, void* in_refcon) { return 0; }
+XPLMCursorStatus dummy_cursor_status_handler(XPLMWindowID in_window_id, int x, int y, void* in_refcon) { return xplm_CursorDefault; }
+int dummy_wheel_handler(XPLMWindowID in_window_id, int x, int y, int wheel, int clicks, void* in_refcon) { return 0; }
+void dummy_key_handler(XPLMWindowID in_window_id, char key, XPLMKeyFlags flags, char virtual_key, void* in_refcon, int losing_focus) { }
 
 // dataref vars
 XPLMCommandRef showwindow;
@@ -72,10 +66,10 @@ PLUGIN_API int XPluginStart(
     char* outDesc)
 {
     strcpy(outName, "Simple Stall Prevention");
-    strcpy(outSig, "vutter.alpha.p");
+    strcpy(outSig, "qjlu404.alpha.p");
     strcpy(outDesc, "simple stall prevention");
 
-    showwindow = XPLMCreateCommand("ShowWindow", "Shows window.");
+    showwindow = XPLMCreateCommand("stallhelper/showwindow", "Shows window.");
     AltitudeAGLDataRef = XPLMRegisterDataAccessor(
         "sim/flightmodel/position/y_agl",
         xplmType_Float,          // The types we support 
@@ -118,7 +112,7 @@ PLUGIN_API int XPluginStart(
 
     g_menu_container_idx = XPLMAppendMenuItem(XPLMFindPluginsMenu(), "Stall Helper", 0, 0);
     g_menu_id = XPLMCreateMenu("Main", XPLMFindPluginsMenu(), g_menu_container_idx, menu_handler, NULL);
-    XPLMAppendMenuItemWithCommand(g_menu_id, "Show Window", showwindow);
+    XPLMAppendMenuItemWithCommand(g_menu_id, "(not implemented) Show Window", showwindow);
 
 
 
@@ -195,7 +189,7 @@ float   GetAoADRCB(void* inRefcon)
 float   GetAltitudeAGLDRCB(void* inRefcon)
 {
     float AltitudeAGL = XPLMGetDataf(AltitudeAGLDataRef);
-    return AltitudeAGL;
+    return AltitudeAGL * 3.28084;
 }
 
 float	GetElevatorTrimPositionDRCB(void* inRefcon)
