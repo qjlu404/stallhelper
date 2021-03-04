@@ -4,7 +4,7 @@
 ## Get latest from https://github.com/github/gitignore/blob/master/VisualStudio.gitignore
 
 # main gitignore
-SDK/Delphi/
+**SDK/Delphi/
 
 # User-specific files
 *.rsuser
