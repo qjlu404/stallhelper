@@ -58,7 +58,7 @@ PLUGIN_API int XPluginStart(char* outName, char* outSig, char* outDesc)
     strcpy_s(outName, 40, "Test");
     strcpy_s(outSig, 40, "qjlu404.alpha.p");
     strcpy_s(outDesc, 40, "simple stall prevention");
-    
+    pid = new PID(0.03, 0.02, 0.01, 0.01f, 1, -1);
     showwindow = XPLMCreateCommand("stallhelper/showwindow", "Shows window.");
 
     CommandedPitchDR = XPLMRegisterDataAccessor(
@@ -271,15 +271,15 @@ void menu_handler(void*, void*)
 
 float  MainFLCB(float inElapsedSinceLastCall, float inElapsedTimeSinceLastFlightLoop, int inCounter, void* inRefcon)
 {
-    pid = new PID(0.03, 0.02, 0.01, 0.01f, 1, -1);
+    
     float response = 0.01;
     AltitudeAGL = XPLMGetDataf(AltitudeAGLDataRef);
     AoA = XPLMGetDataf(AoADataRef);
     Cp = XPLMGetDataf(CommandedPitchDR);
     res = pid->calculate(15, AoA);
-    if (AoA > 12)
+    if (AoA > 14.4)
     {
-        XPLMSetDataf(ElevatorTrimDataRef, res);
+        XPLMSetDataf(CommandedPitchDR, res);
     }
     return response;
 }
