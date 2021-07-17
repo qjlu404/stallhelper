@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <cmath>
 #include "XPLMDataAccess.h"
 #include "XPLMPlugin.h"
 #include "XPLMProcessing.h"
@@ -21,9 +22,9 @@
 #else
     #include <GL/gl.h>
 #endif
-
+#include "pid.h"
 #define MSG_ADD_DATAREF 0x01000000
-
+PID* pid;
 static XPLMWindowID	g_window;
 void draw_hello_world(XPLMWindowID in_window_id, void* in_refcon);
 int dummy_mouse_handler(XPLMWindowID in_window_id, int x, int y, int is_down, void* in_refcon) { return 0; }
@@ -33,43 +34,57 @@ void dummy_key_handler(XPLMWindowID in_window_id, char key, XPLMKeyFlags flags, 
 
 // dataref vars
 XPLMCommandRef showwindow;
-XPLMDataRef AltitudeAGLDataRef = NULL;               // altitude agl dataref
-XPLMDataRef PitchDataRef = NULL;                     // pitch dataref
-XPLMDataRef AoADataRef = NULL;                       // aoa dataref
-XPLMDataRef ElevatorTrimDataRef = NULL;              // elevator trim dataref
-int g_menu_container_idx; // The index of our menu item in the Plugins menu
-XPLMMenuID g_menu_id; // The menu container we'll append all our menu items to
+XPLMDataRef AltitudeAGLDataRef, ElevatorTrimDataRef, PitchOverrideDR, CommandedPitchDR, AoADataRef = NULL;
+int g_menu_container_idx;
+XPLMMenuID g_menu_id;
+
 void menu_handler(void*, void*);
-
-float   GetAoA(void* inRefcon);
-float   GetAltitudeAGL(void* inRefcon);
-
 float   GetAoADRCB(void* inRefcon);
 float   GetAltitudeAGLDRCB(void* inRefcon);
-
-float   GetElevatorTrimPosition(void* inRefcon);
-void    SetElevatorTrimPosition(void* inRefcon, float outValue);
-
 float   GetElevatorTrimPositionDRCB(void* inRefcon);
 void    SetElevatorTrimPositionDRCB(void* inRefcon, float outValue);
-
+void    SetPitchOverride(void* inRefcon, float inValue);
+float   GetCommandedPitch(void* inRefcon);
+void    SetCommandedPitch(void* inRefcon, float inValue);
 float	MainFLCB(float elapsedMe, float elapsedSim, int counter, void* refcon);
 
 float ElevatorTrimPos = 0;
 float AoA;
-
+float Cp;
 //
 
-PLUGIN_API int XPluginStart(
-    char* outName,
-    char* outSig,
-    char* outDesc)
+PLUGIN_API int XPluginStart(char* outName, char* outSig, char* outDesc)
 {
-    strcpy(outName, "Simple Stall Prevention");
-    strcpy(outSig, "qjlu404.alpha.p");
-    strcpy(outDesc, "simple stall prevention");
-
+    strcpy_s(outName, 40, "Test");
+    strcpy_s(outSig, 40, "qjlu404.alpha.p");
+    strcpy_s(outDesc, 40, "simple stall prevention");
+    
     showwindow = XPLMCreateCommand("stallhelper/showwindow", "Shows window.");
+
+    CommandedPitchDR = XPLMRegisterDataAccessor(
+        "sim/joystick/yoke_pitch_ratio",
+        xplmType_Int,            // The types we support 
+        1,                       // Writable 
+        (XPLMGetDatai_f)GetCommandedPitch, (XPLMSetDatai_f)SetCommandedPitch,  // Integer accessors  
+        NULL, NULL,              // Float accessors zzplm
+        NULL, NULL,              // Doubles accessors 
+        NULL, NULL,              // Int array accessors 
+        NULL, NULL,              // Float array accessors 
+        NULL, NULL,              // Raw data accessors 
+        NULL, NULL);
+
+    PitchOverrideDR = XPLMRegisterDataAccessor(
+        "sim/operation/override/override_joystick_pitch",
+        xplmType_Int,            // The types we support 
+        1,                       // Writable 
+        NULL, (XPLMSetDatai_f)SetPitchOverride,  // Integer accessors  
+        NULL, NULL,              // Float accessors zzplm
+        NULL, NULL,              // Doubles accessors 
+        NULL, NULL,              // Int array accessors 
+        NULL, NULL,              // Float array accessors 
+        NULL, NULL,              // Raw data accessors 
+        NULL, NULL);
+
     AltitudeAGLDataRef = XPLMRegisterDataAccessor(
         "sim/flightmodel/position/y_agl",
         xplmType_Float,          // The types we support 
@@ -106,6 +121,7 @@ PLUGIN_API int XPluginStart(
         NULL, NULL,              // Raw data accessors 
         NULL, NULL);
 
+    PitchOverrideDR = XPLMFindDataRef("sim/operation/override/override_joystick_pitch");
     AltitudeAGLDataRef = XPLMFindDataRef("sim/flightmodel/position/y_agl");
     AoADataRef = XPLMFindDataRef("sim/flightmodel2/misc/AoA_angle_degrees");
     ElevatorTrimDataRef = XPLMFindDataRef("sim/cockpit2/controls/elevator_trim");
@@ -145,74 +161,67 @@ PLUGIN_API int XPluginStart(
 
     return g_window != NULL;
 }
-
-
-
 PLUGIN_API void	XPluginStop(void)
 {
     XPLMUnregisterDataAccessor(AoADataRef);
     XPLMUnregisterDataAccessor(ElevatorTrimDataRef);
     XPLMUnregisterDataAccessor(AltitudeAGLDataRef);
+    XPLMUnregisterDataAccessor(AltitudeAGLDataRef);
     XPLMUnregisterFlightLoopCallback(MainFLCB, NULL);
     XPLMDestroyWindow(g_window);
     g_window = NULL;
+    delete pid;
 }
-
-
 PLUGIN_API int XPluginEnable(void)
 {
     return 1;
 }
-
-
 PLUGIN_API void XPluginDisable(void)
 {
 
 }
-
-
-
-PLUGIN_API void XPluginReceiveMessage(
-    XPLMPluginID	inFromWho,
-    long			inMessage,
-    void* inParam)
+PLUGIN_API void XPluginReceiveMessage(XPLMPluginID inFromWho, long inMessage, void* inParam)
 {
 }
-
-
 float   GetAoADRCB(void* inRefcon)
 {
     float aoa = XPLMGetDataf(AoADataRef);
     return aoa;
 }
-
 float   GetAltitudeAGLDRCB(void* inRefcon)
 {
     float AltitudeAGL = XPLMGetDataf(AltitudeAGLDataRef);
     return AltitudeAGL * 3.28084;
 }
-
 float	GetElevatorTrimPositionDRCB(void* inRefcon)
 {
     return ElevatorTrimPos;
 }
-
-
 void	SetElevatorTrimPositionDRCB(void* inRefcon, float inValue)
 {
     ElevatorTrimPos = inValue;
 }
+void    SetPitchOverride(void* inRefcon, float inValue)
+{
 
+}
+float   GetCommandedPitch(void* inRefcon)
+{
+    return XPLMGetDataf(CommandedPitchDR);
+}
+void    SetCommandedPitch(void* inRefcon, float inValue)
+{
+    Cp = inValue;
+}
 int active = 3;
 float response = 0.1;
 float AltitudeAGL = 0;
 bool stalled = 0;
 int activations = 0;
-float settrim = XPLMGetDataf(ElevatorTrimDataRef);
-float InitialTrim = XPLMGetDataf(ElevatorTrimDataRef);
-
-
-void	draw_hello_world(XPLMWindowID in_window_id, void* in_refcon)
+float settrim;
+float InitialTrim;
+double res;
+void draw_hello_world(XPLMWindowID in_window_id, void* in_refcon)
 {
     XPLMSetGraphicsState(
         0 /* no fog */,
@@ -247,9 +256,9 @@ void	draw_hello_world(XPLMWindowID in_window_id, void* in_refcon)
         sprintf(aoastr, "Angle of Attack: %f --", AoA);
         XPLMDrawString(col_white, l + 10, t - 20, aoastr, NULL, xplmFont_Proportional);
     }
-
+    pid = new PID(0.2, 0.3, 0.01, 0.01f, 1, -1);
     sprintf(otherinfo, "Altitude AGL (meters): %i, Activations: %i",(int)AltitudeAGL, activations);
-    sprintf(otherinfo2, "Trim: %f, Initial Trim: %f", settrim, InitialTrim);
+    sprintf(otherinfo2, "CommandedPitch: %f PID: %f", Cp, res);
 
     XPLMDrawString(col_white, l + 10, t - 40, otherinfo, NULL, xplmFont_Proportional);
     XPLMDrawString(col_white, l + 10, t - 60, otherinfo2, NULL, xplmFont_Proportional);
@@ -260,81 +269,17 @@ void menu_handler(void*, void*)
 
 }
 
-
-
-
-float  MainFLCB(
-    float  inElapsedSinceLastCall,
-    float  inElapsedTimeSinceLastFlightLoop,
-    int    inCounter,
-    void* inRefcon)
+float  MainFLCB(float inElapsedSinceLastCall, float inElapsedTimeSinceLastFlightLoop, int inCounter, void* inRefcon)
 {
-    float response = 0.25;
+    pid = new PID(0.03, 0.02, 0.01, 0.01f, 1, -1);
+    float response = 0.01;
     AltitudeAGL = XPLMGetDataf(AltitudeAGLDataRef);
     AoA = XPLMGetDataf(AoADataRef);
-    if (AoA > 15 && AltitudeAGL > 60)
+    Cp = XPLMGetDataf(CommandedPitchDR);
+    res = pid->calculate(15, AoA);
+    if (AoA > 12)
     {
-        active = 1;
-        stalled = 1;
-        response = 0.01;
-        if (settrim > -1)
-        {
-            settrim -= 0.01;
-            XPLMSetDataf(ElevatorTrimDataRef, settrim);
-        }
-        activations++;
-    }
-    else if (AoA > 12 && AltitudeAGL > 152)
-    {
-        active = 2;
-        stalled = 1;
-        response = 0.05;
-        if (settrim > -1)
-        {
-            settrim -= 0.01;
-            XPLMSetDataf(ElevatorTrimDataRef, settrim);
-        }
-        activations++;
-    }
-    else if (AoA < 10 || AltitudeAGL < 60)
-    {
-        if (stalled == 1)
-        {
-            if (activations > 100)
-            {
-                activations = 0;
-            }
-            if (settrim > -1.2 && settrim < 1.1)
-            {
-                if (settrim > InitialTrim + 0.02)
-                {
-                    response = 0.01;
-                    settrim -= 0.01;
-                    XPLMSetDataf(ElevatorTrimDataRef, settrim);
-                }
-                else if (settrim < InitialTrim - 0.02)
-                {
-                    response = 0.01;
-                    settrim += 0.01;
-                    XPLMSetDataf(ElevatorTrimDataRef, settrim);
-                }
-                else 
-                {
-                    stalled = 0; 
-                }
-            }
-        }
-        else
-        {
-            response = 0.5;
-            active = 3;
-            InitialTrim = XPLMGetDataf(ElevatorTrimDataRef);
-            settrim = XPLMGetDataf(ElevatorTrimDataRef);
-        }
-    }
-    else
-    {
-        settrim = XPLMGetDataf(ElevatorTrimDataRef);
+        XPLMSetDataf(ElevatorTrimDataRef, res);
     }
     return response;
 }
